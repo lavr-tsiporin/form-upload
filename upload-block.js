@@ -1,4 +1,4 @@
-const DELAY_BLOCK = 10 //s
+const DELAY_BLOCK = 5 //s
 let result = []
 
 const htmlElements = {
@@ -157,17 +157,51 @@ async function handlerStartBlock({ result, inputTicket, inputDate }) {
       await new Promise((resolve, reject) => {
         setTimeout(() => {
           const select = document.querySelector('select.form-control')
-          if (select.value !== '') {
-            reject(result[i].license)
+          if (select.value === '') {
+            postMessageInLogger({ number: result[i].license, resolution: result[i].resolution })
+            console.log(`${result[i].license} blocks with ${result[i].resolution}`)
+            resolve(true)
           }
-          console.log(`${result[i].license} blocks with ${result[i].resolution}`)
-          resolve(true)
+          reject(result[i].license)
         }, DELAY_BLOCK * 1000)
       })
     } catch (e) {
+      postMessageInLogger({ number: result[i].license })
       console.error(e)
     }
   }
 }
 
+function createLogger(root) {
+  const wrapper = CreateElement({
+    name: 'div',
+    options: {
+      style: 'height: 400px; display: flex; flex-direction: column; box-shadow: black 0px 6px 12px; margin: 0; border-radius: 5px 5px 0 0; overflow-y: scroll; background-color: #fff; padding: 20px;'
+    }
+  })
+  const logger = CreateElement({ name: 'div' })
+  wrapper.append(logger)
+  root.after(wrapper)
+
+  return ({ number, resolution }) => {
+    const p = CreateElement({
+      name: 'p',
+      options: {
+        style: `color: ${resolution !== undefined ? '#000' : 'red'}`
+      }
+    })
+    const small = CreateElement({
+      name: 'small',
+      contents: {
+        textContent: resolution !== undefined
+          ? `[${new Date(Date.now()).toISOString()}] ${number} blocks with ${resolution}`
+          : `[${new Date(Date.now()).toISOString()}] error ${number}`
+      }
+    })
+    p.append(small)
+    logger.append(p)
+  }
+}
+
+const postMessageInLogger = createLogger(htmlElements.root)
 createUpload(htmlElements.root)
