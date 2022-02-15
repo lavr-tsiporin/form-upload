@@ -2,6 +2,7 @@ const DELAY_BLOCK = 5 //s
 let result = []
 
 const htmlElements = {
+  user: document.querySelector('img.avatar'),
   root: document.querySelector('#addBlocking'),
   license: document.querySelector('input[name="key"]'),
   description: document.querySelector('textarea[name="description"]'),
@@ -51,7 +52,7 @@ function createUpload(root) {
   const inputTicket = CreateElement({
     name: 'input',
     options: {
-      style: 'margin: 0 15px;',
+      style: 'margin: 0 15px; width: 30%;',
       placeholder: 'ticket'
     }
   })
@@ -110,11 +111,19 @@ function formatFileInArray(str) {
     }))
 }
 
+function postMessageInTelegram(message) {
+  const user = htmlElements.user.getAttribute('src').match(/.+\/user\/(.+)\/avatar/)[1]
+  window.open(`https://api.telegram.org/bot${API_KEY}/sendMessage?chat_id=${CHAT_ID}&text=\`WEB\` \*${user}\* ${message}&parse_mode=Markdown`,
+    "_blank", "resizable=no,top=10,left=300,width=100,height=100")
+}
+
 async function handlerStartBlock({ result, inputTicket, inputDate }) {
   const { description, ticket, tillDate, btnSubmit, license } = htmlElements
+  let errors = 0
   if (result.length < 1) {
     return
   }
+  postMessageInTelegram(`\*start\* \_block\_, with ticket \`${inputTicket.value}\` with date \`${inputDate.value}\` in summary ${result.length}`)
 
   for (let i = 0; i < result.length; i++) {
     try {
@@ -168,8 +177,11 @@ async function handlerStartBlock({ result, inputTicket, inputDate }) {
     } catch (e) {
       postMessageInLogger({ number: result[i].license })
       console.error(e)
+      errors++
     }
   }
+
+  postMessageInTelegram(`\*end\* \_block\_ ${"%0A"}\`Stats:\`${"%0A"}\`- Total: ${result.length}\`${"%0A"}\`- Errors: ${errors}\``)
 }
 
 function createLogger(root) {
