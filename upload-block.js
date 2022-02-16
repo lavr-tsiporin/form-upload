@@ -1,6 +1,8 @@
 const DELAY_BLOCK = 5 //s
 let result = []
 
+const controllerAbort = new AbortController()
+
 const htmlElements = {
   user: document.querySelector('img.avatar'),
   root: document.querySelector('#addBlocking'),
@@ -63,7 +65,7 @@ function createUpload(root) {
       type: 'date',
     }
   })
-  const buttonElement = CreateElement({
+  const buttonElementStart = CreateElement({
     name: 'button',
     contents: {
       className: 'btn btn-primary',
@@ -73,8 +75,24 @@ function createUpload(root) {
       click: () => handlerStartBlock({ result, inputTicket, inputDate })
     }
   })
+  const buttonElementAbort = CreateElement({
+    name: 'button',
+    options: {
+      style: 'margin-left: 10px;'
+    },
+    contents: {
+      className: 'btn btn-default',
+      textContent: 'Abort'
+    },
+    events: {
+      click: (e) => {
+        e.preventDefault()
+        controllerAbort.abort()
+      }
+    }
+  })
   root.before(spanElement)
-  spanElement.append(inputFile, inputTicket, inputDate, buttonElement)
+  spanElement.append(inputFile, inputTicket, inputDate, buttonElementStart, buttonElementAbort)
 }
 
 function handlerUploadFile() {
@@ -117,6 +135,26 @@ function postMessageInTelegram(message) {
     "_blank", "resizable=no,top=10,left=300,width=100,height=100")
 }
 
+function CreatePromise(callback, { signal = controllerAbort.signal, delay = 1 }) {
+  if (signal.aborted) {
+    console.error('Abort')
+    return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  }
+
+  return new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('Aborted', 'AbortError'))
+    })
+    setTimeout(() => {
+      const condition = callback()
+      if (condition === true) {
+        resolve(condition)
+      }
+      reject(condition)
+    }, delay * 1000)
+  })
+}
+
 async function handlerStartBlock({ result, inputTicket, inputDate }) {
   const { description, ticket, tillDate, btnSubmit, license } = htmlElements
   let errors = 0
@@ -127,60 +165,51 @@ async function handlerStartBlock({ result, inputTicket, inputDate }) {
 
   for (let i = 0; i < result.length; i++) {
     try {
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          document.querySelector('select.form-control').value = '2'
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          license.value = result[i].license
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          description.value = result[i].resolution
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          ticket.value = inputTicket.value
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          tillDate.value = inputDate.value
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          btnSubmit.click()
-          resolve(true)
-        }, 1000)
-      })
-      await new Promise((resolve, reject) => {
-        setTimeout(() => {
-          const select = document.querySelector('select.form-control')
-          if (select.value === '') {
-            postMessageInLogger({ number: result[i].license, resolution: result[i].resolution })
-            console.log(`${result[i].license} blocks with ${result[i].resolution}`)
-            resolve(true)
-          }
-          reject(result[i].license)
-        }, DELAY_BLOCK * 1000)
-      })
+      await CreatePromise(() => {
+        document.querySelector('select.form-control').value = '2'
+        return true
+      }, {})
+      await CreatePromise(() => {
+        license.value = result[i].license
+        return true
+      }, {})
+      await CreatePromise(() => {
+        description.value = result[i].resolution
+        return true
+      }, {})
+      await CreatePromise(() => {
+        ticket.value = inputTicket.value
+        return true
+      }, {})
+      await CreatePromise(() => {
+        tillDate.value = inputDate.value
+        return true
+      }, {})
+      await CreatePromise(() => {
+        btnSubmit.click()
+        return true
+      }, {})
+      await CreatePromise(() => {
+        const select = document.querySelector('select.form-control')
+        if (select.value === '') {
+          postMessageInLogger({ status: 'ok', number: result[i].license, resolution: result[i].resolution })
+          console.log(`${result[i].license} blocks with ${result[i].resolution}`)
+          return true
+        }
+        return result[i].license
+      }, { delay: DELAY_BLOCK })
     } catch (e) {
-      postMessageInLogger({ number: result[i].license })
+      if (e.name === 'AbortError') {
+        postMessageInLogger({ status: 'error', number: result[i].license, resolution: 'abort' })
+        console.error('Abort catch')
+        postMessageInTelegram(`\*abort\* \_block\_`)
+        return
+      }
+      postMessageInLogger({ status: 'error', number: result[i].license, resolution: 'not block' })
       console.error(e)
-      errors++
+      errors += 1
     }
   }
-
   postMessageInTelegram(`\*end\* \_block\_ ${"%0A"}\`Stats:\`${"%0A"}\`- Total: ${result.length}\`${"%0A"}\`- Errors: ${errors}\``)
 }
 
@@ -195,19 +224,19 @@ function createLogger(root) {
   wrapper.append(logger)
   root.after(wrapper)
 
-  return ({ number, resolution }) => {
+  return ({ status, number, resolution }) => {
     const p = CreateElement({
       name: 'p',
       options: {
-        style: `color: ${resolution !== undefined ? '#000' : 'red'}`
+        style: `color: ${status !== 'error' ? '#000' : 'red'}`
       }
     })
     const small = CreateElement({
       name: 'small',
       contents: {
-        textContent: resolution !== undefined
+        textContent: status !== 'error'
           ? `[${new Date(Date.now()).toISOString()}] ${number} blocks with ${resolution}`
-          : `[${new Date(Date.now()).toISOString()}] error ${number}`
+          : `[${new Date(Date.now()).toISOString()}] ${number} error ${resolution}`
       }
     })
     p.append(small)
