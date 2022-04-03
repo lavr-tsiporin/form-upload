@@ -1,12 +1,12 @@
-const DELAY_BLOCK = 5 //s
+const DELAY_BLOCK = 10 //s
 let result = []
-
 const controllerAbort = new AbortController()
 
 const htmlElements = {
   user: document.querySelector('img.avatar'),
   root: document.querySelector('#addBlocking'),
-  license: document.querySelector('input[name="key"]'),
+  select: document.querySelector('select.form-control'),
+  license: document.querySelector('textarea#keyField'),
   description: document.querySelector('textarea[name="description"]'),
   ticket: document.querySelector('input[name="ticket"]'),
   tillDate: document.querySelector('input[name="tillDate"]'),
@@ -31,6 +31,225 @@ function CreateElement({ name, options, contents, events }) {
     })
   }
   return element
+}
+
+function CreatePromise(callback, { signal = controllerAbort.signal, delay = 1 }) {
+  if (signal.aborted) {
+    console.error('Abort')
+    return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  }
+
+  return new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('Aborted', 'AbortError'))
+    })
+    setTimeout(() => {
+      const condition = callback()
+      if (condition === true) {
+        resolve(condition)
+      }
+      reject(condition)
+    }, delay * 1000)
+  })
+}
+
+function formatFileInArray(str) {
+  return str
+    .split('@')
+    .filter(el => el !== '')
+    .map(el => el.split(';'))
+    .map(el => ({
+      license: el[0]
+        .replace('\r', '')
+        .replace('\n', '')
+        .trim(),
+      resolution: el[1]
+        .replace(/^\"/g, '')
+        .replace(/\"$/g, '')
+        .replace(/\"\"/g, '"')
+        .trim()
+    }))
+}
+
+function formatDataInMassBlock(data) {
+  return data.reduce((prev, next) => {
+    /*
+    {
+      title: '',
+      numbers: []
+    }
+     */
+    if (prev.some((item) => item.title === next.resolution)) {
+      const item = prev.find((i) => i.title === next.resolution)
+      const r = item.numbers.push(next.license)
+      if (typeof r !== 'object') {
+        return prev
+      }
+      return [...prev, r]
+    }
+    prev.push({
+      title: next.resolution,
+      numbers: [next.license]
+    })
+    return prev
+  }, [])
+}
+
+function formatDateInLocale() {
+  return new Date().toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow' })
+}
+
+function postMessageInTelegram(message=[]) {
+  const user = htmlElements.user.getAttribute('src').match(/.+\/user\/(.+)\/avatar/)[1]
+  window.open(`https://api.telegram.org/bot${API_KEY}/sendMessage?chat_id=${CHAT_ID}&text=\`WEB\` \*${user}\* ${message.join(`${"%0A"}`)}&parse_mode=Markdown`,
+    "_blank", "resizable=no,top=10,left=300,width=100,height=100")
+}
+
+function switchMessageInLogger({ status, title = '', numbers = [] }) {
+  switch (status) {
+    case 'error':
+      return {
+        style: 'color: red;',
+        message: `[${formatDateInLocale()}] Template: ${title} error. Total numbers: ${numbers.length}`
+      }
+    case 'block':
+      return {
+        style: 'color: black;',
+        message: `[${formatDateInLocale()}] Template: ${title} Total numbers: ${numbers.length} block.`
+      }
+    case 'start':
+      return {
+        style: 'color: black;',
+        message: `[${formatDateInLocale()}] start blocks. Total blocks: ${title}`
+      }
+    case 'finish':
+      return {
+        style: 'color: green;',
+        message: `[${formatDateInLocale()}] finish blocks.`
+      }
+    case 'abort':
+      return {
+        style: 'color: red;',
+        message: `[${formatDateInLocale()}] abort blocks.`
+      }
+    default:
+      return {
+        style: 'color: black;',
+        message: 'Impossible'
+      }
+  }
+}
+
+function calcLengthBlocks(array = []){
+  return array.reduce((prev, next) => {
+    return prev + Number(next.numbers.length)
+  }, 0)
+}
+
+function handlerUploadFile() {
+  if (this.files.length > 1) {
+    window.alert('Требуется один файл')
+    return
+  }
+  const file = this.files[0]
+  const reader = new FileReader()
+  reader.readAsText(file)
+  reader.addEventListener('load', () => {
+    const fileResponse = reader.result
+    result = formatDataInMassBlock(formatFileInArray(fileResponse))
+    console.log(result)
+  })
+  reader.addEventListener('error', () => window.alert('Ошибка при загрузке файла'))
+}
+
+async function handlerStartBlock({ result, inputTicket, inputDate }) {
+  const { description, ticket, tillDate, btnSubmit, license, select } = htmlElements
+  const errors = []
+  const blocks = []
+  if (result.length < 1) {
+    return
+  }
+  postMessageInTelegram([
+    `\*start\* \_block\_`,
+    `\`Tickets:\` ${inputTicket.value}`,
+    `\`Date:\` ${inputDate.value}`,
+    `\`Summary:\` ${calcLengthBlocks(result)}`
+  ])
+  postMessageInLogger({ status: 'start', title: calcLengthBlocks(result) })
+
+  for (let i = 0; i < result.length; i++) {
+    try {
+      console.log(i)
+      await CreatePromise(() => {
+        select.value = 'Driver'
+        select.dispatchEvent(new Event('change'))
+        return true
+      }, {})
+      await CreatePromise(() => {
+        if (getComputedStyle(license).display === 'block') {
+          return true
+        }
+        return {
+          title: 'display error',
+        }
+      }, {})
+      await CreatePromise(() => {
+        license.value = result[i].numbers.join('\n')
+        return true
+      }, {})
+      await CreatePromise(() => {
+        description.value = result[i].title
+        return true
+      }, {})
+      await CreatePromise(() => {
+        ticket.value = inputTicket.value
+        return true
+      }, {})
+      await CreatePromise(() => {
+        tillDate.value = inputDate.value
+        return true
+      }, {})
+      await CreatePromise(() => {
+        btnSubmit.click()
+        return true
+      }, {})
+      await CreatePromise(() => {
+        if (select.value === '') {
+          postMessageInLogger({
+            status: 'block',
+            numbers: result[i].numbers,
+            title: result[i].title,
+          })
+          console.log(`Total numbers: ${result[i].numbers.length} Template: ${result[i].title}`)
+          blocks.push(result[i])
+          return true
+        }
+        return {
+          title: result[i].title,
+          numbers: result[i].numbers
+        }
+      }, { delay: DELAY_BLOCK })
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        console.error('Abort catch')
+        postMessageInLogger({ status: 'abort' })
+        postMessageInTelegram([`\*abort\* \_block\_`])
+        return
+      }
+      postMessageInLogger({ status: 'error', title: result[i].title, numbers: result[i].numbers })
+      console.error(e)
+      errors.push(result[i])
+    }
+  }
+  postMessageInTelegram([
+    `\*end\* \_block\_`,
+    `\`Stats:\``,
+    `\`- Total: ${calcLengthBlocks(result)}\``,
+    `\`- Blocks: ${calcLengthBlocks(blocks)}\``,
+    `\`- Errors: ${calcLengthBlocks(errors)}\``
+  ])
+  postMessageInLogger({ status: 'finish' })
+  console.log('finish blocks')
 }
 
 function createUpload(root) {
@@ -95,124 +314,6 @@ function createUpload(root) {
   spanElement.append(inputFile, inputTicket, inputDate, buttonElementStart, buttonElementAbort)
 }
 
-function handlerUploadFile() {
-  if (this.files.length > 1) {
-    window.alert('Требуется один файл')
-    return
-  }
-  const file = this.files[0]
-  const reader = new FileReader()
-  reader.readAsText(file)
-  reader.addEventListener('load', () => {
-    const fileResponse = reader.result
-    result = formatFileInArray(fileResponse)
-    console.log(result)
-  })
-  reader.addEventListener('error', () => window.alert('Ошибка при загрузке файла'))
-}
-
-function formatFileInArray(str) {
-  return str
-    .split('@')
-    .filter(el => el !== '')
-    .map(el => el.split(';'))
-    .map(el => ({
-      license: el[0]
-        .replace('\r', '')
-        .replace('\n', '')
-        .trim(),
-      resolution: el[1]
-        .replace(/^\"/g, '')
-        .replace(/\"$/g, '')
-        .replace(/\"\"/g, '"')
-        .trim()
-    }))
-}
-
-function postMessageInTelegram(message) {
-  const user = htmlElements.user.getAttribute('src').match(/.+\/user\/(.+)\/avatar/)[1]
-  window.open(`https://api.telegram.org/bot${API_KEY}/sendMessage?chat_id=${CHAT_ID}&text=\`WEB\` \*${user}\* ${message}&parse_mode=Markdown`,
-    "_blank", "resizable=no,top=10,left=300,width=100,height=100")
-}
-
-function CreatePromise(callback, { signal = controllerAbort.signal, delay = 1 }) {
-  if (signal.aborted) {
-    console.error('Abort')
-    return Promise.reject(new DOMException('Aborted', 'AbortError'))
-  }
-
-  return new Promise((resolve, reject) => {
-    signal.addEventListener('abort', () => {
-      reject(new DOMException('Aborted', 'AbortError'))
-    })
-    setTimeout(() => {
-      const condition = callback()
-      if (condition === true) {
-        resolve(condition)
-      }
-      reject(condition)
-    }, delay * 1000)
-  })
-}
-
-async function handlerStartBlock({ result, inputTicket, inputDate }) {
-  const { description, ticket, tillDate, btnSubmit, license } = htmlElements
-  let errors = 0
-  if (result.length < 1) {
-    return
-  }
-  postMessageInTelegram(`\*start\* \_block\_, with ticket \`${inputTicket.value}\` with date \`${inputDate.value}\` in summary ${result.length}`)
-
-  for (let i = 0; i < result.length; i++) {
-    try {
-      await CreatePromise(() => {
-        document.querySelector('select.form-control').value = '2'
-        return true
-      }, {})
-      await CreatePromise(() => {
-        license.value = result[i].license
-        return true
-      }, {})
-      await CreatePromise(() => {
-        description.value = result[i].resolution
-        return true
-      }, {})
-      await CreatePromise(() => {
-        ticket.value = inputTicket.value
-        return true
-      }, {})
-      await CreatePromise(() => {
-        tillDate.value = inputDate.value
-        return true
-      }, {})
-      await CreatePromise(() => {
-        btnSubmit.click()
-        return true
-      }, {})
-      await CreatePromise(() => {
-        const select = document.querySelector('select.form-control')
-        if (select.value === '') {
-          postMessageInLogger({ status: 'ok', number: result[i].license, resolution: result[i].resolution })
-          console.log(`${result[i].license} blocks with ${result[i].resolution}`)
-          return true
-        }
-        return result[i].license
-      }, { delay: DELAY_BLOCK })
-    } catch (e) {
-      if (e.name === 'AbortError') {
-        postMessageInLogger({ status: 'error', number: result[i].license, resolution: 'abort' })
-        console.error('Abort catch')
-        postMessageInTelegram(`\*abort\* \_block\_`)
-        return
-      }
-      postMessageInLogger({ status: 'error', number: result[i].license, resolution: 'not block' })
-      console.error(e)
-      errors += 1
-    }
-  }
-  postMessageInTelegram(`\*end\* \_block\_ ${"%0A"}\`Stats:\`${"%0A"}\`- Total: ${result.length}\`${"%0A"}\`- Errors: ${errors}\``)
-}
-
 function createLogger(root) {
   const wrapper = CreateElement({
     name: 'div',
@@ -224,19 +325,18 @@ function createLogger(root) {
   wrapper.append(logger)
   root.after(wrapper)
 
-  return ({ status, number, resolution }) => {
+  return ({ status, title, numbers}) => {
+    const { style, message } = switchMessageInLogger({ status, title, numbers, })
     const p = CreateElement({
       name: 'p',
       options: {
-        style: `color: ${status !== 'error' ? '#000' : 'red'}`
+        style
       }
     })
     const small = CreateElement({
       name: 'small',
       contents: {
-        textContent: status !== 'error'
-          ? `[${new Date(Date.now()).toISOString()}] ${number} blocks with ${resolution}`
-          : `[${new Date(Date.now()).toISOString()}] ${number} error ${resolution}`
+        textContent: message
       }
     })
     p.append(small)
